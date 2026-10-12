@@ -1,7 +1,7 @@
-# Local coding LLM for Zed: design
+# Local coding LLM for Zed and OpenCode: design
 
 Date: 2026-10-12
-Status: awaiting review
+Status: approved
 
 ## Goal
 
@@ -12,11 +12,12 @@ through an SSH tunnel.
 
 Success means:
 
-- On the 4090 PC, `server/up.sh` brings up a GPU-backed Ollama with the pinned
-  models, and `server/verify.sh` passes.
-- On any client, Zed's agent panel and edit predictions both work against
-  `http://localhost:11434`, and so does OpenCode.
-- Changing a model means editing one file, `models.env`.
+- On the 4090 PC, `bin/up.sh` brings up a GPU-backed Ollama with the
+  configured models, and `bin/verify.sh` passes.
+- On any machine, Zed's agent panel and edit predictions work against
+  `http://localhost:11434`, and OpenCode works from its container.
+- Swapping the model behind a role means editing `config.env` on the server
+  and rerunning `bin/up.sh`. No client config changes.
 
 ## Decisions
 
@@ -25,212 +26,194 @@ Success means:
 | Model server | Ollama in Docker Compose |
 | Server OS | Ubuntu, scripts use `apt` |
 | Zed features | Agent panel and edit predictions |
-| Other clients | OpenCode (terminal, and as a Zed external agent) |
+| Other clients | OpenCode, running in Docker |
 | Remote access | SSH tunnel; the server listens on localhost only |
-| Scope | Coding only |
+| Models | Role aliases built from Modelfiles, plus any extra pulled models |
+| Scope | Coding only; standard coder models |
 
 ## Architecture
 
 ```
-laptop                                   4090 PC
-┌──────────────────────┐                ┌────────────────────────────┐
-│ Zed, OpenCode        │                │ Zed, OpenCode              │
-│   │ localhost:11434  │                │   │ localhost:11434        │
-│   ▼                  │   SSH tunnel   │   ▼                        │
-│ tunnel.sh ───────────┼───────────────►│ 127.0.0.1:11434            │
-└──────────────────────┘                │   ▼                        │
-                                        │ docker: ollama ── RTX 4090 │
-                                        │   └─ volume: ollama-models │
-                                        └────────────────────────────┘
+client machine (laptop)                    server (4090 PC)
+┌───────────────────────────────┐         ┌───────────────────────────────┐
+│ Zed ── localhost:11434        │         │ Zed ── localhost:11434        │
+│          │                    │         │          │                    │
+│ ┌────────▼─────────┐          │   SSH   │ ┌────────▼─────────┐          │
+│ │ tunnel           ├──────────┼────────►│ │ ollama ── RTX 4090│         │
+│ │ (alias: ollama)  │          │         │ │                  │          │
+│ └────────▲─────────┘          │         │ └────────▲─────────┘          │
+│ ┌────────┴─────────┐          │         │ ┌────────┴─────────┐          │
+│ │ opencode         │          │         │ │ opencode         │          │
+│ └──────────────────┘          │         │ └──────────────────┘          │
+└───────────────────────────────┘         └───────────────────────────────┘
 ```
 
-Every client talks to a localhost port, so client config is identical on both
-machines.
+One Compose project serves both kinds of machine. On the server the `ollama`
+service answers on the Compose network as `ollama`. On a client the `tunnel`
+service takes that same name. Zed therefore always uses
+`http://localhost:11434` and the OpenCode container always uses
+`http://ollama:11434/v1`.
 
-## Repo layout
+The tunnel runs in a container because a host-side tunnel is unreliable to
+reach from other containers under rootless Docker.
 
-```
-local-llm/
-├── models.env              # pinned image tag, model tags, context size, port
-├── server/
-│   ├── compose.yaml        # ollama service, CPU-capable
-│   ├── compose.gpu.yaml    # overlay adding the NVIDIA GPU reservation
-│   ├── install-prereqs.sh  # NVIDIA container toolkit, GPU-in-container check
-│   ├── up.sh               # start stack, pull models
-│   └── verify.sh
-├── client/
-│   ├── zed-settings.jsonc.tmpl
-│   ├── opencode.json.tmpl
-│   ├── render.sh           # templates + models.env -> client/out/
-│   ├── tunnel.sh
-│   └── verify.sh
-├── .gitignore              # client/out/
-└── README.md
-```
+## Configuration
 
-## models.env
+Three layers, loaded in this order by `bin/lib.sh`:
 
-The single source of truth. Shell-sourceable and usable as a Compose env file.
+1. `config.env`, committed and shared by all machines.
+2. `local.env`, gitignored, one per machine, created from
+   `local.env.example`.
+3. The file named by `CONFIG_OVERRIDE`, if set. Used for tests.
+
+### config.env
 
 | Variable | Starting value | Meaning |
 |---|---|---|
-| `OLLAMA_IMAGE_TAG` | `0.34.1` | Pinned `ollama/ollama` image version |
+| `OLLAMA_IMAGE_TAG` | `0.34.1` | Pinned `ollama/ollama` image |
+| `OPENCODE_VERSION` | `2.0.27` | Pinned `@opencode/cli` |
 | `OLLAMA_PORT` | `11434` | Host port, bound to 127.0.0.1 |
-| `AGENT_MODEL` | `qwen3-coder:30b` | Agent and chat model |
-| `COMPLETION_MODEL` | `qwen2.5-coder:3b-base` | Edit prediction model |
-| `CONTEXT_LENGTH` | `32768` | Context size, server-wide |
-| `USE_GPU` | `1` | `0` drops the GPU overlay, for testing |
+| `AGENT_BASE` | `qwen3-coder:30b` | Model behind the `agent` role |
+| `AGENT_CTX` | `32768` | Context size of `agent` |
+| `AUTOCOMPLETE_BASE` | `qwen2.5-coder:3b-base` | Model behind `autocomplete` |
+| `AUTOCOMPLETE_CTX` | `4096` | Context size of `autocomplete` |
+| `EXTRA_MODELS` | empty | Further tags to pull, space separated |
 
-The model tags and the context size are starting values. They are tuned on
-the 4090 PC; see "Tuning" below.
+Model tags and context sizes are starting values, tuned on the 4090 PC.
 
-## Server
+### local.env
+
+| Variable | Meaning |
+|---|---|
+| `ROLE` | `server` or `client` |
+| `USE_GPU` | Server only. `1` adds the NVIDIA overlay |
+| `SSH_HOST` | Client only. SSH destination of the server |
+| `TUNNEL_USE_AGENT` | Client only. `1` passes the SSH agent to the tunnel |
+| `PROJECTS_DIR` | Folder the OpenCode container may work in |
+| `TZ` | Time zone for the OpenCode container |
+
+## Models
+
+### Roles
+
+Each `modelfiles/<role>.Modelfile.tmpl` becomes an Ollama model named
+`<role>`. A template sets the base model and `num_ctx`, and may set sampling
+parameters and a system prompt. A role shares the weights of its base model.
+
+Two roles ship: `agent` and `autocomplete`. Clients refer only to these
+names. Sampling parameters are left at the base model's defaults; the
+templates carry commented examples.
+
+Per-role context sizes keep the autocomplete model's memory small and let
+OpenCode get a large context even though its OpenAI-compatible endpoint
+cannot request one.
+
+### Extra models
+
+Anything in `EXTRA_MODELS` is pulled as-is. Zed discovers every pulled model
+and offers it in its model picker. Ollama also accepts Hugging Face GGUF
+references of the form `hf.co/<user>/<repo>:<quant>`.
+
+## Components
 
 ### compose.yaml
 
-One service, `ollama`:
+- `ollama` (profile `server`): pinned image, port
+  `127.0.0.1:${OLLAMA_PORT}:11434`, named volume `ollama-models`,
+  `restart: unless-stopped`, healthcheck `ollama list`. Environment:
+  `OLLAMA_MAX_LOADED_MODELS=2`, `OLLAMA_NUM_PARALLEL=1`,
+  `OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_FLASH_ATTENTION=1`,
+  `OLLAMA_KV_CACHE_TYPE=q8_0`.
+- `tunnel` (profile `client`): Alpine with an SSH client. Forwards its port
+  11434 to `127.0.0.1:${OLLAMA_PORT}` on `SSH_HOST`, with keep-alives,
+  `ExitOnForwardFailure` and strict host key checking. Network alias
+  `ollama`. Publishes `127.0.0.1:${OLLAMA_PORT}`. Reads a copy of the host's
+  `~/.ssh`, mounted read-only.
+- `opencode` (profile `opencode`): Node image with pinned `@opencode/cli`.
+  Mounts `PROJECTS_DIR` at `/workspace`, the rendered `opencode.json`
+  read-only, and a named volume for its data. Runs as the host user under
+  rootful Docker so that files it creates are owned by that user.
 
-- Image `ollama/ollama:${OLLAMA_IMAGE_TAG}`.
-- Port `127.0.0.1:${OLLAMA_PORT}:11434`. Never bound to other interfaces.
-- Named volume `ollama-models` mounted at `/root/.ollama`.
-- `restart: unless-stopped`.
-- Healthcheck: `ollama list`.
-- Environment:
-  - `OLLAMA_CONTEXT_LENGTH=${CONTEXT_LENGTH}`. Set on the server because
-    OpenCode uses the OpenAI-compatible endpoint, which cannot set a context
-    size per request.
-  - `OLLAMA_MAX_LOADED_MODELS=2`, so agent and completion models stay loaded
-    together.
-  - `OLLAMA_NUM_PARALLEL=1`.
-  - `OLLAMA_KEEP_ALIVE=30m`, so VRAM is released when the machine is idle.
-  - `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`, to reduce
-    context memory.
+No service sets `container_name`, and the project is named `local-llm`, so it
+cannot collide with other stacks.
 
-### compose.gpu.yaml
+`compose.gpu.yaml` adds the NVIDIA device reservation to `ollama`.
+`compose.agent.yaml` adds the SSH agent socket to `tunnel`.
 
-Adds `deploy.resources.reservations.devices` with driver `nvidia`, count
-`all`, capabilities `[gpu]`. Kept separate so the base stack runs on a machine
-without an NVIDIA GPU.
+### Scripts
 
-### install-prereqs.sh
+All in `bin/`, all using `set -euo pipefail`, all sourcing `lib.sh`.
 
-Run once on the 4090 PC.
+- `prereqs.sh`: server only, run once. Fails with instructions if
+  `nvidia-smi` or Docker is missing. Installs `nvidia-container-toolkit` via
+  apt, configures the runtime for rootful or rootless Docker, and runs
+  `nvidia-smi` in a throwaway GPU container.
+- `up.sh`: on a server, checks the port is free, starts `ollama`, pulls the
+  role bases and `EXTRA_MODELS`, and creates the roles. On a client, starts
+  `tunnel` and waits for the endpoint. Then renders the client config.
+  Idempotent.
+- `render.sh`: writes `out/zed-settings.jsonc` and `out/opencode.json` from
+  the templates.
+- `opencode.sh`: runs the OpenCode container, passing arguments through.
+- `verify.sh`: see Verification.
 
-1. Fail with instructions if `nvidia-smi` is missing. The script does not
-   install GPU drivers.
-2. Fail with instructions if Docker or the Compose plugin is missing.
-3. Install `nvidia-container-toolkit` from NVIDIA's apt repository if absent,
-   run `nvidia-ctk runtime configure --runtime=docker`, restart Docker.
-4. Run `nvidia-smi` in a throwaway GPU container and fail if it errors.
+### Client config
 
-Steps 3 and 4 need `sudo`; the script says so before prompting.
-
-### up.sh
-
-1. Source `models.env`.
-2. Fail if `OLLAMA_PORT` is already in use by something other than this
-   stack, naming the likely cause (a native Ollama service) and the fix.
-3. `docker compose up -d --wait`, with the GPU overlay when `USE_GPU=1`.
-4. Pull `AGENT_MODEL` and `COMPLETION_MODEL` inside the container. A tag that
-   does not exist fails here with the tag named.
-
-Idempotent: safe to rerun after editing `models.env`.
-
-### verify.sh
-
-Each check prints pass or fail with the reason; exit code is non-zero on any
-failure.
-
-1. Container is healthy.
-2. With `USE_GPU=1`: `nvidia-smi` works inside the container.
-3. Both models are present.
-4. Agent model answers a chat request that offers one tool, and the reply
-   contains a tool call.
-5. Completion model answers a `/v1/completions` request with non-empty text.
-6. With `USE_GPU=1`: `ollama ps` reports both models loaded 100% on GPU. A
-   CPU split is a failure, with a pointer to "Tuning".
-
-## Client
-
-### render.sh
-
-Substitutes `models.env` values into the two templates and writes
-`client/out/zed-settings.jsonc` and `client/out/opencode.json`. It then prints
-where each file goes. It does not write outside the repo.
-
-### Zed settings snippet
-
-Merged into `~/.config/zed/settings.json` by hand, because that file holds
-comments and personal settings that an automatic merge could damage.
-
-- `language_models.ollama`: `api_url` `http://localhost:${OLLAMA_PORT}`, and
-  one `available_models` entry for `AGENT_MODEL` with `max_tokens` set to
-  `CONTEXT_LENGTH` and `supports_tools: true`. Without `max_tokens`, Zed
-  requests a 4096-token context.
-- `agent.default_model`: provider `ollama`, model `AGENT_MODEL`.
-- `edit_predictions`: provider `ollama`, model `COMPLETION_MODEL`,
-  `prompt_format: "qwen"`, `max_output_tokens: 512`.
-
-### OpenCode config
-
-Copied to `~/.config/opencode/opencode.json` by hand if that file exists
-already, otherwise `render.sh` prints the `cp` command.
-
-- A provider named `ollama` using `@ai-sdk/openai-compatible` with
-  `baseURL` `http://localhost:${OLLAMA_PORT}/v1`.
-- One model whose key equals `AGENT_MODEL` exactly.
-
-Running OpenCode inside Zed's agent panel is a manual step, documented in the
-README: install it from Zed's ACP registry. It reads the same `opencode.json`.
-
-### tunnel.sh
-
-`client/tunnel.sh <ssh-host> [local-port]`
-
-Runs `ssh -N -L <local-port>:127.0.0.1:${OLLAMA_PORT} <ssh-host>` with
-`ServerAliveInterval=30` and `ExitOnForwardFailure=yes`. The local port
-defaults to `OLLAMA_PORT`. If that port is taken, it fails and names the two
-fixes: stop the local service holding it, or pass another port and render the
-client config with the same port.
-
-Not needed on the 4090 PC itself.
-
-### client/verify.sh
-
-Runs checks 3, 4 and 5 of the server verify against
-`http://localhost:<port>`. Passing on the laptop proves the tunnel too.
+- **Zed** (`zed/settings.jsonc.tmpl`): Ollama provider at
+  `http://localhost:${OLLAMA_PORT}` with a provider-wide `context_window`,
+  the `agent` role with `max_tokens` equal to `AGENT_CTX`, `agent` as default
+  model, and edit predictions on `autocomplete` with `prompt_format: "qwen"`.
+  Zed otherwise requests a 4096-token context. Merged into
+  `~/.config/zed/settings.json` by hand.
+- **OpenCode** (`opencode/opencode.json.tmpl`): provider `ollama` through
+  `@ai-sdk/openai-compatible` at `http://ollama:11434/v1`, model `agent`
+  with `limit.context` equal to `AGENT_CTX`, default model `ollama/agent`.
 
 ## Error handling
 
-All scripts use `set -euo pipefail`. Every failure message names what failed
-and the next command to run. No script installs GPU drivers, edits Zed
-settings, stops system services or opens firewall ports.
+Every failure message names what failed and the next command to run. No
+script installs GPU drivers or Docker, edits Zed settings, stops or removes
+other Docker stacks, opens firewall ports, creates SSH keys or enables
+`sshd`.
 
-## Testing
+## Verification
 
-- **On the laptop (no NVIDIA GPU):** the full server and client flow with
-  `USE_GPU=0`, a spare port, and small models already present locally. This
-  exercises every script path except GPU checks 2 and 6.
-- **Static:** `shellcheck` on all scripts, `docker compose config` on both
-  compose files, and a JSON parse of both rendered client files.
-- **On the 4090 PC:** `install-prereqs.sh`, `up.sh`, `verify.sh` with the real
-  models. This is the only place the GPU checks and VRAM fit can be
-  confirmed, and it is run by the owner, not during implementation.
+`bin/verify.sh` prints pass or fail per check and exits non-zero on failure.
+
+1. Model endpoint answers at `http://localhost:${OLLAMA_PORT}`.
+2. Roles `agent` and `autocomplete` exist with the configured `num_ctx`.
+3. `agent` answers a chat request offering one tool with a tool call.
+4. `autocomplete` answers `/v1/completions` with non-empty text.
+5. The OpenCode container loads its config and gets a model reply from
+   `http://ollama:11434/v1`.
+6. A file created by the OpenCode container in `PROJECTS_DIR` is owned by the
+   host user.
+7. Server with `USE_GPU=1` only: `nvidia-smi` works in the container, and
+   both roles are loaded fully on the GPU.
+
+### Testing
+
+- **On the laptop (no NVIDIA GPU):** the server role with
+  `CONFIG_OVERRIDE=config.test.env`, which uses tiny models, port 11435 and a
+  separate project name. Covers checks 1 to 6.
+- **Static:** `shellcheck` on all scripts, `docker compose config` for every
+  profile, a JSON parse of the rendered OpenCode config.
+- **On the 4090 PC only:** `prereqs.sh`, check 7, the VRAM fit of the real
+  models, and the tunnel end to end.
 
 ## Tuning
 
 24 GB is tight for a 19 GB agent model, its context and a second model. If
-verify check 6 fails, or generation is slow, adjust `models.env` in this
-order:
+check 7 reports a CPU split, or generation is slow, change `config.env` in
+this order and rerun `bin/up.sh`:
 
-1. Lower `CONTEXT_LENGTH` (for example to 24576).
-2. Use a smaller `COMPLETION_MODEL` (`qwen2.5-coder:1.5b-base`).
-3. Use a smaller or more heavily quantised `AGENT_MODEL`.
+1. Lower `AGENT_CTX` (for example to 24576).
+2. Use a smaller `AUTOCOMPLETE_BASE` (`qwen2.5-coder:1.5b-base`).
+3. Use a smaller or more heavily quantised `AGENT_BASE`.
 
-Alternatives worth comparing once the baseline works, each a one-line change:
-Qwen 3.6 27B or Devstral Small 24B as the agent model, and Zeta 2.1 as the
-completion model (community GGUF conversions only, with `prompt_format`
-`zeta2_1`).
+Alternatives to compare once the baseline works: Qwen 3.6 27B or Devstral
+Small 24B behind `agent`, and Zeta 2.1 behind `autocomplete` (community GGUF
+conversions only, with `prompt_format: "zeta2_1"` in Zed).
 
 ## Out of scope
 
@@ -239,4 +222,3 @@ completion model (community GGUF conversions only, with `prompt_format`
 - Installing NVIDIA drivers or Docker.
 - Automatic merging into Zed settings.
 - llama.cpp or other model servers.
-- A persistent tunnel service.
