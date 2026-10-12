@@ -1,0 +1,16 @@
+# Role "agent": chat and tool use. Built by bin/up.sh as the model "agent".
+# Base model and context size come from config.env.
+
+FROM ${AGENT_BASE}
+PARAMETER num_ctx ${AGENT_CTX}
+
+# Sampling is left at the base model's defaults. Uncomment to override:
+# PARAMETER temperature 0.2
+# PARAMETER top_p 0.8
+# PARAMETER top_k 20
+# PARAMETER repeat_penalty 1.05
+
+# A system prompt of your own. Zed and OpenCode send theirs as well.
+# SYSTEM """
+# You are a senior engineer. Prefer small, focused changes.
+# """

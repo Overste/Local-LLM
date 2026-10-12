@@ -1,0 +1,11 @@
+# Added by bin/lib.sh when ROLE=server and USE_GPU=1.
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

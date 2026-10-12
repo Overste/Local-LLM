@@ -1,0 +1,8 @@
+# Added by bin/lib.sh when ROLE=client and TUNNEL_USE_AGENT=1.
+
+services:
+  tunnel:
+    environment:
+      SSH_AUTH_SOCK: /ssh-agent
+    volumes:
+      - ${SSH_AUTH_SOCK}:/ssh-agent

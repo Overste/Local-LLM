@@ -1,0 +1,38 @@
+// Merge these keys into ~/.config/zed/settings.json.
+// "agent" and "autocomplete" are roles built on the server; which model sits
+// behind each is set in config.env there.
+{
+  "agent": {
+    "default_model": {
+      "provider": "ollama",
+      "model": "agent:latest"
+    }
+  },
+  "language_models": {
+    "ollama": {
+      "api_url": "http://localhost:${OLLAMA_PORT}",
+      // Context size for models Zed discovers by itself. Without it Zed
+      // asks Ollama for only 4096 tokens.
+      "context_window": ${AGENT_CTX},
+      "available_models": [
+        {
+          "name": "agent:latest",
+          "display_name": "Agent (${AGENT_BASE})",
+          "max_tokens": ${AGENT_CTX},
+          "supports_tools": true
+        }
+      ]
+    }
+  },
+  "edit_predictions": {
+    "provider": "ollama",
+    "ollama": {
+      "api_url": "http://localhost:${OLLAMA_PORT}",
+      "model": "autocomplete",
+      // Zed cannot infer the format from a role name. "qwen" matches the
+      // default autocomplete base; change it if you change the base model.
+      "prompt_format": "qwen",
+      "max_output_tokens": 512
+    }
+  }
+}

@@ -1,0 +1,5 @@
+# Role "autocomplete": Zed edit predictions. Built by bin/up.sh as the model
+# "autocomplete". Base model and context size come from config.env.
+
+FROM ${AUTOCOMPLETE_BASE}
+PARAMETER num_ctx ${AUTOCOMPLETE_CTX}

@@ -1,0 +1,4 @@
+source-path=SCRIPTDIR
+external-sources=true
+# ROLE and friends are set by load_config from the env files.
+disable=SC2153
