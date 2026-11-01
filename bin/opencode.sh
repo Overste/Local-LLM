@@ -11,4 +11,5 @@ load_config
 "$REPO_ROOT/bin/render.sh" >/dev/null
 mkdir -p "$PROJECTS_DIR"
 
-compose run --rm --no-deps opencode "$@"
+# --build picks up a changed OPENCODE_VERSION; it is a no-op otherwise.
+compose run --build --quiet-build --rm --no-deps opencode "$@"

@@ -79,7 +79,7 @@ fi
 # 5 and 6. OpenCode container
 "$REPO_ROOT/bin/render.sh" >/dev/null
 mkdir -p "$PROJECTS_DIR"
-oc() { compose run --rm -T --no-deps opencode "$@"; }
+oc() { compose run --build --quiet-build --rm -T --no-deps opencode "$@"; }
 
 if oc opencode debug config 2>/dev/null | grep -q 'http://ollama:11434/v1'; then
   pass "opencode loads its config"

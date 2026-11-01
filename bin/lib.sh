@@ -8,7 +8,7 @@ export REPO_ROOT
 
 # Variables the templates may use. Anything else containing "$" is left alone.
 # shellcheck disable=SC2016
-TEMPLATE_VARS='$OLLAMA_PORT $AGENT_BASE $AGENT_CTX $AUTOCOMPLETE_BASE $AUTOCOMPLETE_CTX'
+TEMPLATE_VARS='$OLLAMA_PORT $AGENT_BASE $AGENT_CTX $AGENT_THINKING $AUTOCOMPLETE_BASE $AUTOCOMPLETE_CTX'
 
 info() { printf '==> %s\n' "$*"; }
 
@@ -49,6 +49,7 @@ load_config() {
   : "${COMPOSE_PROJECT_NAME:=local-llm}"
   : "${USE_GPU:=0}"
   : "${TUNNEL_USE_AGENT:=0}"
+  : "${AGENT_THINKING:=false}"
   : "${SSH_HOST:=}"
   : "${PROJECTS_DIR:=$HOME/Projects}"
   : "${OUT_DIR:=$REPO_ROOT/out}"
