@@ -51,14 +51,22 @@ services:
       args:
         OPENCODE_VERSION: ${OPENCODE_VERSION}
     user: ${CONTAINER_USER}
-    working_dir: /workspace
+    # PROJECTS_DIR has the same path inside the container as on the host, so
+    # the project paths Zed sends over ACP also exist in here.
+    working_dir: ${PROJECTS_DIR}
     stdin_open: true
     tty: true
     environment:
       TZ: ${TZ}
     volumes:
-      - ${PROJECTS_DIR}:/workspace
+      - ${PROJECTS_DIR}:${PROJECTS_DIR}
       - ${OUT_DIR}/opencode.json:/home/opencode/.config/opencode/opencode.json:ro
+      # The user's coding rules (OPENCODE_RULES), read as the global AGENTS.md.
+      # OpenCode 2.x ignores the "instructions" key of opencode.json.
+      - ${OUT_DIR}/opencode-rules.md:/home/opencode/.config/opencode/AGENTS.md:ro
+      # The agents from this repo. Only this folder is mounted: OpenCode writes
+      # its own state into its config folder, so that cannot be read-only.
+      - ./opencode/config/agents:/home/opencode/.config/opencode/agents:ro
       - opencode-data:/home/opencode/.local
 
 volumes:

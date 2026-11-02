@@ -97,7 +97,7 @@ else
 fi
 
 probe=".local-llm-verify.$$"
-if oc touch "/workspace/$probe" 2>/dev/null && [ "$(stat -c %u "$PROJECTS_DIR/$probe")" = "$(id -u)" ]; then
+if oc touch "$PROJECTS_DIR/$probe" 2>/dev/null && [ "$(stat -c %u "$PROJECTS_DIR/$probe")" = "$(id -u)" ]; then
   pass "files created by opencode belong to $(id -un)"
 else
   fail "files created by opencode belong to $(id -un)" "check PROJECTS_DIR ($PROJECTS_DIR) is writable"

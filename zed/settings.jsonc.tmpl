@@ -1,7 +1,17 @@
-// Merge these keys into ~/.config/zed/settings.json.
+// Merge these keys into ~/.config/zed/settings.json. Add the "OpenCode" entry
+// to agent_servers next to any agents you already have there.
 // "agent" and "autocomplete" are roles built on the server; which model sits
 // behind each is set in config.env there.
 {
+  // OpenCode as an external agent in the agent panel, over ACP. It runs in its
+  // container, so it only works in projects under PROJECTS_DIR.
+  "agent_servers": {
+    "OpenCode": {
+      "type": "custom",
+      "command": "${REPO_ROOT}/bin/opencode.sh",
+      "args": ["opencode", "acp"]
+    }
+  },
   "agent": {
     "default_model": {
       "provider": "ollama",

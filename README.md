@@ -12,8 +12,8 @@ script, and that machine is either the model server or a client of it.
 - **An agent in Zed.** Chat, file edits and tool use in Zed's agent panel.
 - **Autocomplete in Zed.** Edit predictions as you type, from a second,
   smaller model.
-- **OpenCode.** A terminal coding agent, sandboxed in a container that can
-  only see one projects folder.
+- **OpenCode.** A coding agent in the terminal or in Zed's agent panel,
+  sandboxed in a container that can only see one projects folder.
 - **Use from anywhere.** A laptop reaches the GPU machine through an SSH
   tunnel. The model port is never exposed to the network.
 - **Swappable models.** Clients know two role names, `agent` and
@@ -114,9 +114,12 @@ bin/verify.sh
 ## Zed
 
 `bin/up.sh` writes `out/zed-settings.jsonc`. Open your Zed settings
-(`~/.config/zed/settings.json`) and merge in its three keys: `agent`,
-`language_models` and `edit_predictions`. Replace any existing keys of the
-same name.
+(`~/.config/zed/settings.json`) and merge in its keys:
+
+- `agent`, `language_models` and `edit_predictions`: replace any existing
+  keys of the same name.
+- `agent_servers`: add its `OpenCode` entry next to the agents you already
+  have. See [OpenCode in Zed](#opencode-in-zed).
 
 The snippet is not applied automatically, since your settings file holds your
 own preferences and comments.
@@ -133,7 +136,43 @@ bin/opencode.sh opencode run "..."   # a one-off prompt
 ```
 
 The container sees only the folder named by `PROJECTS_DIR` in `local.env`,
-mounted at `/workspace`. Files it creates there belong to your user.
+mounted at the same path as on the host. Files it creates there belong to
+your user.
+
+### OpenCode in Zed
+
+With the `agent_servers` entry from `out/zed-settings.jsonc`, Zed starts
+OpenCode in its container over ACP, the protocol Zed uses for external
+agents. Start a thread with the `+` button in the agent panel, then
+**OpenCode**. The agents from [the harness](#the-harness) and your coding
+rules work there as in the terminal. Custom slash commands do not: in
+OpenCode 2.0.27 they return nothing over ACP.
+
+- **Only projects under `PROJECTS_DIR`.** Zed passes the project's path to
+  OpenCode, and the container has no other folders.
+- **Run `bin/opencode.sh` once in a terminal first.** The first start builds
+  the image, which takes minutes, and Zed shows no progress meanwhile.
+- **Linux only.** On Windows, Zed passes Windows paths that do not exist in
+  the container.
+
+### The harness
+
+The agents in `opencode/config/agents/` shape how OpenCode works, the same on
+every machine. They are mounted into the container, so a change applies the
+next time OpenCode starts.
+
+| Agent | What it does |
+|---|---|
+| `build` | The default. Reads first, makes small changes, checks them and calls `review`. Asks before any command that is not read-only. |
+| `plan` | Read-only. Investigates the code and writes a plan. Switch to it with Tab, or in Zed's mode menu. |
+| `review` | A subagent that checks the uncommitted changes against the coding rules and for bugs. |
+
+The docs at opencode.ai describe OpenCode 1.x. Plugins and custom commands
+work differently in 2.x and are not part of this harness yet.
+
+**Your own coding rules.** Set `OPENCODE_RULES` in `local.env` to a markdown
+file, for example `$HOME/.claude/CLAUDE.md`. OpenCode follows it in every
+session. The file stays on your machine and is not committed.
 
 ## Configuration
 
@@ -142,7 +181,7 @@ Settings are read from three files, later ones overriding earlier ones.
 | File | Committed | Holds |
 |---|---|---|
 | `config.env` | yes | Shared settings: versions, models, context sizes |
-| `local.env` | no | This machine's role, SSH host, projects folder |
+| `local.env` | no | This machine's role, SSH host, projects folder, coding rules |
 | `$CONFIG_OVERRIDE` | n/a | Optional extra file, used for testing |
 
 ### Changing models
@@ -292,6 +331,7 @@ project, so it does not disturb a real setup on the same machine.
 | `compose.agent.yaml` | Adds the SSH agent to `tunnel` |
 | `modelfiles/` | One template per role |
 | `opencode/` | OpenCode image and config template |
+| `opencode/config/agents/` | OpenCode agents: `build`, `plan`, `review` |
 | `tunnel/` | SSH tunnel image |
 | `zed/` | Zed settings template |
 | `bin/prereqs.sh` | Server, once: GPU support for Docker |
