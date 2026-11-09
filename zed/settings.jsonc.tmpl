@@ -17,14 +17,41 @@
       "provider": "ollama",
       "model": "agent:latest",
       "enable_thinking": ${AGENT_THINKING}
+    },
+    // Every Zed task uses the agent role, so no second model takes VRAM next
+    // to it. Short tasks skip the thinking step to answer sooner.
+    "inline_assistant_model": {
+      "provider": "ollama",
+      "model": "agent:latest",
+      "enable_thinking": false
+    },
+    "commit_message_model": {
+      "provider": "ollama",
+      "model": "agent:latest",
+      "enable_thinking": false
+    },
+    "thread_summary_model": {
+      "provider": "ollama",
+      "model": "agent:latest",
+      "enable_thinking": false
+    },
+    "compaction_model": {
+      "provider": "ollama",
+      "model": "agent:latest",
+      "enable_thinking": false
+    },
+    "subagent_model": {
+      "provider": "ollama",
+      "model": "agent:latest",
+      "enable_thinking": ${AGENT_THINKING}
     }
   },
   "language_models": {
     "ollama": {
       "api_url": "http://localhost:${OLLAMA_PORT}",
-      // Context size for models Zed discovers by itself. Without it Zed
-      // asks Ollama for only 4096 tokens.
-      "context_window": ${AGENT_CTX},
+      // Only the agent role is offered. The other models on the server are
+      // the bases of the roles and the autocomplete model, which cannot chat.
+      "auto_discover": false,
       "available_models": [
         {
           "name": "agent:latest",

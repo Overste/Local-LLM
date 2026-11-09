@@ -55,7 +55,7 @@ On the server, `bin/up.sh` builds two Ollama models from the templates in
 | Role | Used for | Default model | Context |
 |---|---|---|---|
 | `agent` | Zed agent panel, OpenCode | `qwen3.6:27b` | 32,768 tokens |
-| `autocomplete` | Zed edit predictions | `qwen2.5-coder:3b-base` | 4,096 tokens |
+| `autocomplete` | Zed edit predictions | `qwen2.5-coder:1.5b-base` | 4,096 tokens |
 
 A role is a thin layer over its base model: the same weights, plus a context
 size and optional sampling settings or system prompt. Swapping the model
@@ -86,15 +86,31 @@ git clone <this repo> && cd local-llm
 cp local.env.example local.env   # keep ROLE=server and USE_GPU=1
 bin/prereqs.sh                   # once: lets Docker use the GPU, needs sudo
 bin/up.sh                        # start Ollama, pull models, build the roles
-bin/verify.sh
+bin/verify.sh                    # also builds the OpenCode image
 ```
+
+Before `bin/up.sh`, set these in `local.env`:
+
+- `PROJECTS_DIR`: the folder that holds your projects. OpenCode sees nothing
+  else.
+- `OPENCODE_RULES=$REPO_ROOT/local-rules.md`, after you copy `local-rules.md`
+  from a machine that has it, for example with
+  `scp other-machine:local-llm/local-rules.md .`. See
+  [the harness](#the-harness).
 
 `bin/prereqs.sh` installs the NVIDIA container toolkit with `apt` and
 configures Docker to use it. It does not install GPU drivers or Docker.
 
-`bin/up.sh` downloads about 21 GB the first time. It is safe to rerun.
+`bin/up.sh` downloads about 20 GB the first time. It is safe to rerun.
 
-Then set up Zed as described under [Zed](#zed).
+Then:
+
+1. Merge `out/zed-settings.jsonc` into your Zed settings, as described under
+   [Zed](#zed).
+2. In Zed's agent panel, start an **OpenCode** thread, or run
+   `bin/opencode.sh` in a terminal.
+3. Raise `AGENT_CTX` as far as it fits, as described under
+   [Tuning](#tuning-for-24-gb-of-vram).
 
 ## Client setup
 
@@ -124,8 +140,11 @@ bin/verify.sh
 The snippet is not applied automatically, since your settings file holds your
 own preferences and comments.
 
-Every model pulled on the server shows up in Zed's model picker, so you can
-switch models per conversation.
+Zed's model picker offers only the `agent` role, and every Zed task uses it:
+the agent panel, the inline assistant, commit messages, thread titles,
+subagents and summaries. So no second model takes VRAM next to it. To offer a
+model from `EXTRA_MODELS` as well, add it to `available_models` in your Zed
+settings.
 
 ## OpenCode
 
@@ -150,8 +169,9 @@ OpenCode 2.0.27 they return nothing over ACP.
 
 - **Only projects under `PROJECTS_DIR`.** Zed passes the project's path to
   OpenCode, and the container has no other folders.
-- **Run `bin/opencode.sh` once in a terminal first.** The first start builds
-  the image, which takes minutes, and Zed shows no progress meanwhile.
+- **Build the image first.** `bin/verify.sh` does that, or run
+  `bin/opencode.sh` once in a terminal. The first build takes minutes, and Zed
+  shows no progress meanwhile.
 - **Linux only.** On Windows, Zed passes Windows paths that do not exist in
   the container.
 
@@ -170,9 +190,15 @@ next time OpenCode starts.
 The docs at opencode.ai describe OpenCode 1.x. Plugins and custom commands
 work differently in 2.x and are not part of this harness yet.
 
-**Your own coding rules.** Set `OPENCODE_RULES` in `local.env` to a markdown
-file, for example `$HOME/.claude/CLAUDE.md`. OpenCode follows it in every
-session. The file stays on your machine and is not committed.
+**Your own coding rules.** Write them in `local-rules.md` in the repo folder,
+which git ignores, and set `OPENCODE_RULES=$REPO_ROOT/local-rules.md` in
+`local.env`. OpenCode follows them in every session. Copy the file to each
+machine by hand; it is not committed.
+
+Keep the rules short and about code only. Every request carries them, and a
+local model follows a short list better than a long one. An instruction file
+written for another assistant, such as a `CLAUDE.md`, also holds rules about
+its own tools and machines, which only cost context here.
 
 ## Configuration
 
@@ -193,7 +219,7 @@ Edit `config.env` on the server, then run `bin/up.sh` there.
 | Swap the agent model | `AGENT_BASE`, and `AGENT_THINKING` to match |
 | Swap the autocomplete model | `AUTOCOMPLETE_BASE` |
 | Change a context size | `AGENT_CTX`, `AUTOCOMPLETE_CTX` |
-| Add models to choose from in Zed | `EXTRA_MODELS` |
+| Add models to choose from in Zed | `EXTRA_MODELS`, then `available_models` in your Zed settings |
 | Change sampling or add a system prompt | `modelfiles/<role>.Modelfile.tmpl` |
 
 Things to keep in mind:
@@ -216,11 +242,13 @@ defaults are close to the limit. If `bin/verify.sh` reports that a role is
 not fully on the GPU, or replies are slow, change these in order:
 
 1. Lower `AGENT_CTX`, for example to `24576`.
-2. Set `AUTOCOMPLETE_BASE=qwen2.5-coder:1.5b-base`.
+2. Turn off edit predictions in Zed. Ollama then never loads the
+   `autocomplete` role, and its VRAM stays free.
 3. Use a smaller or more heavily quantised `AGENT_BASE`.
 
-If everything fits with room to spare, raise `AGENT_CTX` instead. Agents work
-better with more context.
+If everything fits with room to spare, raise `AGENT_CTX` instead, in steps of
+`8192`, and run `bin/up.sh` and `bin/verify.sh` after each step. Agents work
+better with more context; aim for `65536` if it fits.
 
 Models worth comparing once the defaults work:
 
